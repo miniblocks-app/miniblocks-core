@@ -1,0 +1,1 @@
+module miniblocks-core
