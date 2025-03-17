@@ -35,14 +35,24 @@ func main() {
 // handleUpload handles the incoming request, writes the user code to main.dart,
 // zips the flutter project, and triggers the GitHub workflow.
 func handleUpload(w http.ResponseWriter, r *http.Request) {
-	code := r.FormValue("code")
-	if code == "" {
-		logger.Warn("Code not provided in request")
-		http.Error(w, "code not provided", http.StatusBadRequest)
+	// --- 1) Parse JSON ---
+	var payload struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		logger.Warn("Invalid JSON body", zap.Error(err))
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	// Create a temporary directory.
+	code := payload.Code
+	if code == "" {
+		logger.Warn("Code not provided in request")
+		http.Error(w, "code field is empty", http.StatusBadRequest)
+		return
+	}
+
+	// --- 2) Create a temporary directory ---
 	tempDir, err := ioutil.TempDir("", "flutter_project")
 	if err != nil {
 		logger.Error("Failed to create temp dir", zap.Error(err))
@@ -50,44 +60,39 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func(path string) {
-		err := os.RemoveAll(path)
-		if err != nil {
-			println(err.Error())
+		if rmErr := os.RemoveAll(path); rmErr != nil {
+			logger.Error("Failed to remove temp dir", zap.Error(rmErr))
 		}
-	}(tempDir) // Clean up after processing.
+	}(tempDir)
 
-	// Copy the Flutter project template.
-	err = copyDir("./template_project", tempDir)
-	if err != nil {
+	// --- 3) Copy the Flutter project template ---
+	if err := copyDir("./flutter", tempDir); err != nil {
 		logger.Error("Failed to copy project template", zap.Error(err))
 		http.Error(w, "failed to copy project template", http.StatusInternalServerError)
 		return
 	}
 	logger.Info("Copied Flutter template", zap.String("tempDir", tempDir))
 
-	// Write the code to lib/main.dart.
+	// --- 4) Write the code to lib/main.dart ---
 	mainDartPath := filepath.Join(tempDir, "lib", "main.dart")
-	err = os.WriteFile(mainDartPath, []byte(code), 0644)
-	if err != nil {
+	if err := os.WriteFile(mainDartPath, []byte(code), 0644); err != nil {
 		logger.Error("Failed to write main.dart", zap.Error(err))
 		http.Error(w, "failed to write main.dart", http.StatusInternalServerError)
 		return
 	}
 	logger.Info("Wrote code to main.dart")
 
-	// Zip the project directory.
+	// --- 5) Zip the project directory ---
 	zipFilePath := tempDir + ".zip"
-	err = zipDir(tempDir, zipFilePath)
-	if err != nil {
+	if err := zipDir(tempDir, zipFilePath); err != nil {
 		logger.Error("Failed to create zip file", zap.Error(err))
 		http.Error(w, "failed to create zip file", http.StatusInternalServerError)
 		return
 	}
 	logger.Info("Zipped directory", zap.String("zipPath", zipFilePath))
 
-	// Trigger GitHub workflow
-	err = triggerGitHubWorkflow(zipFilePath)
-	if err != nil {
+	// --- 6) Trigger GitHub workflow ---
+	if err := triggerGitHubWorkflow(zipFilePath); err != nil {
 		logger.Error("Failed to trigger GitHub workflow", zap.Error(err))
 		http.Error(w, "failed to trigger GitHub workflow: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -141,17 +146,15 @@ func zipDir(source, target string) error {
 		return err
 	}
 	defer func(zipFile *os.File) {
-		err := zipFile.Close()
-		if err != nil {
-			logger.Error("Failed to close zip file", zap.Error(err))
+		if closeErr := zipFile.Close(); closeErr != nil {
+			logger.Error("Failed to close zip file", zap.Error(closeErr))
 		}
 	}(zipFile)
 
 	archive := zip.NewWriter(zipFile)
 	defer func(archive *zip.Writer) {
-		err := archive.Close()
-		if err != nil {
-			logger.Error("Failed to close zip archive", zap.Error(err))
+		if closeErr := archive.Close(); closeErr != nil {
+			logger.Error("Failed to close zip archive", zap.Error(closeErr))
 		}
 	}(archive)
 
@@ -174,9 +177,8 @@ func zipDir(source, target string) error {
 			return err
 		}
 		defer func(file *os.File) {
-			err := file.Close()
-			if err != nil {
-				logger.Error("Failed to close file while zipping", zap.Error(err))
+			if closeErr := file.Close(); closeErr != nil {
+				logger.Error("Failed to close file while zipping", zap.Error(closeErr))
 			}
 		}(file)
 
@@ -188,7 +190,6 @@ func zipDir(source, target string) error {
 		_, err = io.Copy(f, file)
 		return err
 	})
-
 	return err
 }
 
@@ -229,9 +230,8 @@ func triggerGitHubWorkflow(zipPath string) error {
 		return err
 	}
 	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			logger.Error("Failed to close response body", zap.Error(err))
+		if closeErr := Body.Close(); closeErr != nil {
+			logger.Error("Failed to close response body", zap.Error(closeErr))
 		}
 	}(resp.Body)
 
@@ -239,7 +239,7 @@ func triggerGitHubWorkflow(zipPath string) error {
 		logger.Error("Non-2XX status returned by GitHub dispatch", zap.Int("statusCode", resp.StatusCode))
 		return fmt.Errorf("GitHub API returned status: %s", resp.Status)
 	}
-	logger.Info("Successfully triggered GitHub workflow")
 
+	logger.Info("Successfully triggered GitHub workflow")
 	return nil
 }
