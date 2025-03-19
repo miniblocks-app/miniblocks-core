@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"cloud.google.com/go/storage"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"encoding/json"
 	"fmt"
 	"go.uber.org/zap"
@@ -208,6 +210,17 @@ func zipDir(source, target string) error {
 }
 
 func uploadToFirebase(zipFilePath string) (string, error) {
+
+	key := []byte(os.Getenv("KEY_ENCRYPT"))
+
+	fmt.Println("File encrypted to encrypted.dat")
+
+	// Decrypt encrypted.dat -> decrypted.txt
+	if err := decryptFile("mini.dat", "mini.json", key); err != nil {
+		fmt.Println("Decryption failed:", err)
+		return "", err
+	}
+
 	bucketName := "miniblocks-ecd95.firebasestorage.app"
 	ctx := context.Background()
 	client, err := storage.NewClient(ctx, option.WithCredentialsFile("mini.json"))
@@ -305,4 +318,43 @@ func triggerWorkflowDispatch(zipURL string) error {
 
 	logger.Info("Successfully triggered GitHub workflow via workflow_dispatch")
 	return nil
+}
+
+// decryptFile reads the encrypted file from inFile, decrypts it using AES-GCM,
+// and writes the plaintext to outFile.
+func decryptFile(inFile, outFile string, key []byte) error {
+	// Read the encrypted data.
+	data, err := ioutil.ReadFile(inFile)
+	if err != nil {
+		return err
+	}
+
+	// Create a new AES cipher block.
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return err
+	}
+
+	// Wrap the block in GCM mode.
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return err
+	}
+
+	nonceSize := aead.NonceSize()
+	if len(data) < nonceSize {
+		return fmt.Errorf("ciphertext too short")
+	}
+
+	// Split the nonce and the ciphertext.
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+
+	// Decrypt the data.
+	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return err
+	}
+
+	// Write the decrypted plaintext to the output file.
+	return ioutil.WriteFile(outFile, plaintext, 0644)
 }
