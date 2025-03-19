@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"go.uber.org/zap"
-	"google.golang.org/api/option"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -210,7 +209,7 @@ func zipDir(source, target string) error {
 func uploadToFirebase(zipFilePath string) (string, error) {
 	bucketName := "miniblocks-ecd95.firebasestorage.app"
 	ctx := context.Background()
-	client, err := storage.NewClient(ctx, option.WithCredentialsFile("mini.json"))
+	client, err := storage.NewClient(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create storage client: %w", err)
 	}
