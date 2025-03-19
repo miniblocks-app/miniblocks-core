@@ -3,15 +3,20 @@ package main
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/base64"
+	"cloud.google.com/go/storage"
+	"context"
 	"encoding/json"
 	"fmt"
 	"go.uber.org/zap"
+	"google.golang.org/api/option"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 var logger *zap.Logger
@@ -27,13 +32,13 @@ func main() {
 
 	logger.Info("Starting server on :8080")
 	http.HandleFunc("/upload", handleUpload)
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	if err := http.ListenAndServe(":8081", nil); err != nil {
 		logger.Fatal("Failed to start server", zap.Error(err))
 	}
 }
 
 // handleUpload handles the incoming request, writes the user code to main.dart,
-// zips the flutter project, and triggers the GitHub workflow.
+// zips the Flutter project, uploads it to Firebase Storage, and triggers the GitHub Actions workflow.
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	// --- 1) Parse JSON ---
 	var payload struct {
@@ -91,8 +96,17 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("Zipped directory", zap.String("zipPath", zipFilePath))
 
-	// --- 6) Trigger GitHub workflow ---
-	if err := triggerGitHubWorkflow(zipFilePath); err != nil {
+	// --- 6) Upload the ZIP to Firebase Storage ---
+	firebaseURL, err := uploadToFirebase(zipFilePath)
+	if err != nil {
+		logger.Error("Failed to upload to Firebase", zap.Error(err))
+		http.Error(w, "failed to upload to Firebase: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	logger.Info("Uploaded ZIP to Firebase", zap.String("firebaseURL", firebaseURL))
+
+	// --- 7) Trigger GitHub workflow via workflow_dispatch ---
+	if err := triggerWorkflowDispatch(firebaseURL); err != nil {
 		logger.Error("Failed to trigger GitHub workflow", zap.Error(err))
 		http.Error(w, "failed to trigger GitHub workflow: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -193,40 +207,90 @@ func zipDir(source, target string) error {
 	return err
 }
 
-// triggerGitHubWorkflow sends a POST request to the GitHub dispatches API with base64-encoded zip data.
-func triggerGitHubWorkflow(zipPath string) error {
-	data, err := os.ReadFile(zipPath)
-	if err != nil {
-		logger.Error("Failed to read zip file", zap.String("zipPath", zipPath), zap.Error(err))
-		return err
-	}
-	encodedZip := base64.StdEncoding.EncodeToString(data)
+func uploadToFirebase(zipFilePath string) (string, error) {
+	bucketName := "miniblocks-ecd95.firebasestorage.app" // Firebase Storage bucket name
 
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx, option.WithCredentialsFile("mini.json"))
+	if err != nil {
+		return "", fmt.Errorf("failed to create storage client: %w", err)
+	}
+	defer client.Close()
+
+	f, err := os.Open(zipFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open zip file for reading: %w", err)
+	}
+	defer f.Close()
+
+	objectName := fmt.Sprintf("%d.zip", time.Now().UnixNano())
+
+	wc := client.Bucket(bucketName).Object(objectName).NewWriter(ctx)
+	// Make the file publicly readable
+	wc.ACL = []storage.ACLRule{{Entity: storage.AllUsers, Role: storage.RoleReader}}
+	wc.Metadata = map[string]string{
+		"firebaseStorageDownloadTokens": "", // Empty token makes it public
+	}
+	if _, err = io.Copy(wc, f); err != nil {
+		return "", fmt.Errorf("failed to write zip to bucket: %w", err)
+	}
+	if err := wc.Close(); err != nil {
+		return "", fmt.Errorf("failed to close writer: %w", err)
+	}
+
+	// Firebase Storage download URL format
+	publicURL := fmt.Sprintf("https://firebasestorage.googleapis.com/v0/b/%s/o/%s?alt=media",
+		bucketName,
+		url.PathEscape(objectName))
+
+	logger.Info(fmt.Sprintf("Uploaded %s to %s", zipFilePath, publicURL))
+	return publicURL, nil
+}
+
+// triggerWorkflowDispatch triggers a GitHub Actions workflow_dispatch event for the "build-and-release.yml" workflow.
+// Instead of sending the zip contents, it sends a link in the `zip_url` input.
+func triggerWorkflowDispatch(zipURL string) error {
+	// "ref" must be a valid branch or tag in your repo, e.g., "main"
 	payload := map[string]interface{}{
-		"event_type": "flutter_project_submission",
-		"client_payload": map[string]string{
-			"zip_data": encodedZip,
+		"ref": "main",
+		"inputs": map[string]string{
+			"code_zip_url": zipURL, // Pass the Firebase (signed) URL to your GitHub Actions workflow
 		},
 	}
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
-		logger.Error("Failed to marshal payload for GitHub dispatch", zap.Error(err))
+		logger.Error("Failed to marshal payload for workflow dispatch", zap.Error(err))
 		return err
 	}
 
-	url := "https://api.github.com/repos/your-username/your-repo/dispatches"
+	url := "https://api.github.com/repos/miniblocks-app/compiler/actions/workflows/125375079/dispatches"
+
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	if githubToken == "" {
+		return fmt.Errorf("GITHUB_TOKEN environment variable not set")
+	}
+
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
 	if err != nil {
-		logger.Error("Failed to create request to GitHub dispatch", zap.Error(err))
+		logger.Error("Failed to create request to GitHub workflow dispatch", zap.Error(err))
 		return err
 	}
+
+	// Optional: debug logging of request
+	dump, _ := httputil.DumpRequest(req, true)
+	logger.Info("Workflow Dispatch Request", zap.String("dump", string(dump)))
+
+	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "token YOUR_GITHUB_TOKEN")
+	req.Header.Set("Authorization", "Bearer "+githubToken)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Error("Failed to send request to GitHub dispatch", zap.Error(err))
+		logger.Error("Failed to send request to GitHub workflow dispatch", zap.Error(err))
+		if resp != nil {
+			logger.Error("Response from GitHub", zap.Any("resp", resp))
+		}
 		return err
 	}
 	defer func(Body io.ReadCloser) {
@@ -235,11 +299,12 @@ func triggerGitHubWorkflow(zipPath string) error {
 		}
 	}(resp.Body)
 
+	// GitHub returns 204 No Content on a successful dispatch.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		logger.Error("Non-2XX status returned by GitHub dispatch", zap.Int("statusCode", resp.StatusCode))
+		logger.Error("Non-2XX status returned by GitHub workflow dispatch", zap.Int("statusCode", resp.StatusCode))
 		return fmt.Errorf("GitHub API returned status: %s", resp.Status)
 	}
 
-	logger.Info("Successfully triggered GitHub workflow")
+	logger.Info("Successfully triggered GitHub workflow via workflow_dispatch")
 	return nil
 }
