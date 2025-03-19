@@ -208,8 +208,7 @@ func zipDir(source, target string) error {
 }
 
 func uploadToFirebase(zipFilePath string) (string, error) {
-	bucketName := "miniblocks-ecd95.firebasestorage.app" // Firebase Storage bucket name
-
+	bucketName := "miniblocks-ecd95.firebasestorage.app"
 	ctx := context.Background()
 	client, err := storage.NewClient(ctx, option.WithCredentialsFile("mini.json"))
 	if err != nil {
@@ -226,7 +225,6 @@ func uploadToFirebase(zipFilePath string) (string, error) {
 	objectName := fmt.Sprintf("%d.zip", time.Now().UnixNano())
 
 	wc := client.Bucket(bucketName).Object(objectName).NewWriter(ctx)
-	// Make the file publicly readable
 	wc.ACL = []storage.ACLRule{{Entity: storage.AllUsers, Role: storage.RoleReader}}
 	wc.Metadata = map[string]string{
 		"firebaseStorageDownloadTokens": "", // Empty token makes it public
