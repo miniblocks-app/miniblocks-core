@@ -1,28 +1,20 @@
-# 1) Use the official Golang image to build the application
-FROM golang:1.20-alpine AS builder
+# Use the official Go image as the base image
+FROM golang:1.24 AS builder
 
-WORKDIR /app
+# Set the working directory inside the container
+WORKDIR /goapp
 
-# Copy go.mod and go.sum first to cache module downloads
+# Copy the Go module files
 COPY go.mod go.sum ./
+
+# Download the dependencies
 RUN go mod download
 
-# Copy the rest of the source code
+# Copy the rest of the application code
 COPY . .
 
-# Build the Go binary
-RUN go build -o server
+# Build the Go application
+RUN go build -o main .
 
-# 2) Create a minimal final image
-FROM alpine:3.17
-WORKDIR /app
-
-# Copy the compiled binary from the builder stage
-COPY --from=builder /app/server /app/server
-
-# EXPOSE is optional for Cloud Run,
-# but helps local testing (must match the port in your code).
-EXPOSE 8080
-
-# Start the server
-CMD ["/app/server"]
+# Set the entry point command to run the built binary
+CMD ["./main"]
