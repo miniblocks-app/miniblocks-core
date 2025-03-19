@@ -33,7 +33,7 @@ func main() {
 	}()
 
 	logger.Info("Starting server on :8080")
-	http.HandleFunc("/upload", handleUpload)
+	http.HandleFunc("/upload", corsMiddleware(handleUpload))
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		logger.Fatal("Failed to start server", zap.Error(err))
 	}
@@ -357,4 +357,22 @@ func decryptFile(inFile, outFile string, key []byte) error {
 
 	// Write the decrypted plaintext to the output file.
 	return ioutil.WriteFile(outFile, plaintext, 0644)
+}
+
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Set the CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		// If this is a preflight (OPTIONS) request, then respond OK and return
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Otherwise, call the next handler
+		next.ServeHTTP(w, r)
+	}
 }
