@@ -19,6 +19,10 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/miniblocks-app/miniblocks-core/db"
+	"github.com/miniblocks-app/miniblocks-core/handlers"
+	"github.com/miniblocks-app/miniblocks-core/middleware"
 )
 
 var logger *zap.Logger
@@ -32,9 +36,33 @@ func main() {
 		_ = logger.Sync() // Flush any buffered log entries
 	}()
 
+	// Connect to MongoDB
+	mongoURI := os.Getenv("MONGODB_URI")
+	if mongoURI == "" {
+		mongoURI = "mongodb://localhost:27017"
+	}
+	if err := db.Connect(mongoURI); err != nil {
+		logger.Fatal("Failed to connect to MongoDB", zap.Error(err))
+	}
+	defer db.Disconnect()
+
+	// Initialize handlers
+	userHandler := handlers.NewUserHandler(logger)
+
+	// Setup routes
+	mux := http.NewServeMux()
+
+	// Public routes
+	mux.HandleFunc("/api/register", corsMiddleware(userHandler.Register))
+	mux.HandleFunc("/api/login", corsMiddleware(userHandler.Login))
+
+	// Protected routes
+	mux.HandleFunc("/api/profile", corsMiddleware(middleware.AuthMiddleware(userHandler.GetProfile)))
+	mux.HandleFunc("/api/profile/update", corsMiddleware(middleware.AuthMiddleware(userHandler.UpdateProfile)))
+	mux.HandleFunc("/upload", corsMiddleware(middleware.AuthMiddleware(handleUpload)))
+
 	logger.Info("Starting server on :8080")
-	http.HandleFunc("/upload", corsMiddleware(handleUpload))
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	if err := http.ListenAndServe(":8080", mux); err != nil {
 		logger.Fatal("Failed to start server", zap.Error(err))
 	}
 }
