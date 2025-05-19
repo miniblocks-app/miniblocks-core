@@ -7,11 +7,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
-	"miniblocks-core/db"
-	"miniblocks-core/models"
+	"github.com/miniblocks-app/miniblocks-core/models"
 )
 
 var jwtSecret = []byte("your-secret-key") // TODO: Move to environment variable

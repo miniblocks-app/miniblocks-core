@@ -39,12 +39,17 @@ func main() {
 	// Connect to MongoDB
 	mongoURI := os.Getenv("MONGODB_URI")
 	if mongoURI == "" {
-		mongoURI = "mongodb://localhost:27017"
+		mongoURI = "mongodb+srv://mrmihiraj:miniblocks@core-cluster.bnpvs.mongodb.net/?retryWrites=true&w=majority&appName=core-cluster"
 	}
 	if err := db.Connect(mongoURI); err != nil {
 		logger.Fatal("Failed to connect to MongoDB", zap.Error(err))
 	}
-	defer db.Disconnect()
+	defer func() {
+		err := db.Disconnect()
+		if err != nil {
+			logger.Error("Failed to disconnect from MongoDB", zap.Error(err))
+		}
+	}()
 
 	// Initialize handlers
 	userHandler := handlers.NewUserHandler(logger)

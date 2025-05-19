@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"time"
 
@@ -10,9 +11,9 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
 
-	"miniblocks-core/db"
-	"miniblocks-core/middleware"
-	"miniblocks-core/models"
+	"github.com/miniblocks-app/miniblocks-core/db"
+	"github.com/miniblocks-app/miniblocks-core/middleware"
+	"github.com/miniblocks-app/miniblocks-core/models"
 )
 
 type UserHandler struct {
