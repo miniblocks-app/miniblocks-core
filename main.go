@@ -64,7 +64,7 @@ func main() {
 	// Protected routes
 	mux.HandleFunc("/api/profile", corsMiddleware(middleware.AuthMiddleware(userHandler.GetProfile)))
 	mux.HandleFunc("/api/profile/update", corsMiddleware(middleware.AuthMiddleware(userHandler.UpdateProfile)))
-	mux.HandleFunc("/upload", corsMiddleware(middleware.AuthMiddleware(handleUpload)))
+	mux.HandleFunc("/upload", corsMiddleware(handleUpload))
 
 	logger.Info("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", mux); err != nil {
