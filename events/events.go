@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // Event represents a workflow run event
@@ -77,14 +78,19 @@ func (m *Manager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set headers for SSE
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 
+	// Create a channel for this client
 	client := make(chan Event, 1)
 	m.register <- client
 
+	// Ensure client is removed when connection closes
 	defer func() {
 		m.unregister <- client
 	}()
@@ -92,6 +98,10 @@ func (m *Manager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	// Send initial connection message
 	fmt.Fprintf(w, "data: %s\n\n", "Connected")
 	flusher.Flush()
+
+	// Keep connection alive with periodic heartbeats
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
 
 	// Keep connection alive and send events
 	for {
@@ -103,6 +113,10 @@ func (m *Manager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		case <-ticker.C:
+			// Send heartbeat to keep connection alive
+			fmt.Fprintf(w, ": heartbeat\n\n")
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
