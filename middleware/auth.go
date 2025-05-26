@@ -91,21 +91,3 @@ func GetUserFromContext(ctx context.Context) (*Claims, bool) {
 	claims, ok := ctx.Value("user").(*Claims)
 	return claims, ok
 }
-
-func CorsMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Set the CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-		// If this is a preflight (OPTIONS) request, then respond OK and return
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// Otherwise, call the next handler
-		next.ServeHTTP(w, r)
-	}
-}
