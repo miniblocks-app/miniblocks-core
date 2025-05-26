@@ -84,13 +84,14 @@ func (m *Manager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set headers for SSE
+	// Set headers for SSE and Cloud Run
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+	w.Header().Set("X-Accel-Buffering", "no") // Disable proxy buffering
 
 	// Create a channel for this client
 	client := make(chan WorkflowRunEvent, 1)
@@ -111,9 +112,16 @@ func (m *Manager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	flusher.Flush()
 
-	// Keep connection alive with periodic heartbeats
-	ticker := time.NewTicker(15 * time.Second)
+	// Keep connection alive with more frequent heartbeats
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+
+	// Create a done channel to handle client disconnection
+	done := make(chan bool)
+	go func() {
+		<-r.Context().Done()
+		done <- true
+	}()
 
 	// Keep connection alive and send events
 	for {
@@ -130,7 +138,7 @@ func (m *Manager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			// Send heartbeat to keep connection alive
 			fmt.Fprintf(w, ": heartbeat\n\n")
 			flusher.Flush()
-		case <-r.Context().Done():
+		case <-done:
 			return
 		}
 	}
