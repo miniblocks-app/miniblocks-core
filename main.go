@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/miniblocks-app/miniblocks-core/db"
+	"github.com/miniblocks-app/miniblocks-core/events"
 	"github.com/miniblocks-app/miniblocks-core/handlers"
 	"github.com/miniblocks-app/miniblocks-core/logger"
 	"github.com/miniblocks-app/miniblocks-core/middleware"
@@ -34,6 +35,10 @@ func main() {
 		}
 	}()
 
+	// Initialize event manager
+	eventManager := events.NewManager()
+	go eventManager.Start()
+
 	// Initialize handlers
 	userHandler := handlers.NewUserHandler(log)
 
@@ -43,12 +48,16 @@ func main() {
 	// Public routes
 	mux.HandleFunc("/api/register", middleware.CorsMiddleware(userHandler.Register))
 	mux.HandleFunc("/api/login", middleware.CorsMiddleware(userHandler.Login))
+	mux.HandleFunc("/upload", middleware.CorsMiddleware(utils.HandleUpload))
+	mux.HandleFunc("/compile", middleware.CorsMiddleware(utils.HandleCompile))
+
+	// Event routes
+	mux.HandleFunc("/api/events", middleware.CorsMiddleware(eventManager.HandleSSE))
+	mux.HandleFunc("/api/github", middleware.CorsMiddleware(eventManager.HandleWebhook))
 
 	// Protected routes
 	mux.HandleFunc("/api/profile", middleware.CorsMiddleware(middleware.AuthMiddleware(userHandler.GetProfile)))
 	mux.HandleFunc("/api/profile/update", middleware.CorsMiddleware(middleware.AuthMiddleware(userHandler.UpdateProfile)))
-	mux.HandleFunc("/upload", middleware.CorsMiddleware(utils.HandleUpload))
-	mux.HandleFunc("/compile", middleware.CorsMiddleware(utils.HandleCompile))
 
 	log.Info("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", mux); err != nil {
