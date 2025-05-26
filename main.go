@@ -54,6 +54,7 @@ func main() {
 	// Event routes
 	mux.HandleFunc("/api/events", middleware.CorsMiddleware(eventManager.HandleSSE))
 	mux.HandleFunc("/api/github", middleware.CorsMiddleware(eventManager.HandleWebhook))
+	mux.HandleFunc("/api/heartbeat", middleware.CorsMiddleware(eventManager.HandleHeartbeat))
 
 	// Protected routes
 	mux.HandleFunc("/api/profile", middleware.CorsMiddleware(middleware.AuthMiddleware(userHandler.GetProfile)))

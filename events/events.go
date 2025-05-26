@@ -27,6 +27,12 @@ type ConnectionEvent struct {
 	Type string `json:"type"`
 }
 
+// HeartbeatEvent represents a heartbeat message
+type HeartbeatEvent struct {
+	Type      string `json:"type"`
+	Timestamp int64  `json:"timestamp"`
+}
+
 // Manager handles SSE connections and event broadcasting
 type Manager struct {
 	clients    map[chan WorkflowRunEvent]bool
@@ -142,6 +148,34 @@ func (m *Manager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// HandleHeartbeat handles heartbeat requests from the frontend
+func (m *Manager) HandleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Create heartbeat event
+	heartbeat := HeartbeatEvent{
+		Type:      "heartbeat",
+		Timestamp: time.Now().Unix(),
+	}
+
+	// Send response
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+
+	// Handle preflight request
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	json.NewEncoder(w).Encode(heartbeat)
 }
 
 // HandleWebhook processes GitHub webhook events
