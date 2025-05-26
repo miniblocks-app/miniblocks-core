@@ -1,0 +1,43 @@
+name: Flutter Web Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      code_zip_url:
+        description: 'URL of the code zip file'
+        required: true
+      build_type:
+        description: 'Type of build (web)'
+        required: true
+        default: 'web'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      - name: Download code
+        run: |
+          curl -L "${{ github.event.inputs.code_zip_url }}" -o code.zip
+          unzip code.zip -d flutter_project
+          cd flutter_project
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build web
+        run: flutter build web --release
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: web-build
+          path: flutter_project/build/web
+          retention-days: 1 

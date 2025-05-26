@@ -3,14 +3,11 @@ package main
 import (
 	"archive/zip"
 	"bytes"
-	"cloud.google.com/go/storage"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/json"
 	"fmt"
-	"go.uber.org/zap"
-	"google.golang.org/api/option"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -19,6 +16,10 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"cloud.google.com/go/storage"
+	"go.uber.org/zap"
+	"google.golang.org/api/option"
 
 	"github.com/miniblocks-app/miniblocks-core/db"
 	"github.com/miniblocks-app/miniblocks-core/handlers"
@@ -65,6 +66,7 @@ func main() {
 	mux.HandleFunc("/api/profile", corsMiddleware(middleware.AuthMiddleware(userHandler.GetProfile)))
 	mux.HandleFunc("/api/profile/update", corsMiddleware(middleware.AuthMiddleware(userHandler.UpdateProfile)))
 	mux.HandleFunc("/upload", corsMiddleware(handleUpload))
+	mux.HandleFunc("/compile", corsMiddleware(handleCompile))
 
 	logger.Info("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", mux); err != nil {
@@ -149,6 +151,111 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("Project successfully processed and GitHub workflow triggered."))
+}
+
+// handleCompile handles the compilation request, builds the Flutter web version,
+// and returns the build file as a response.
+func handleCompile(w http.ResponseWriter, r *http.Request) {
+	// --- 1) Parse JSON ---
+	var payload struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		logger.Warn("Invalid JSON body", zap.Error(err))
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	code := payload.Code
+	if code == "" {
+		logger.Warn("Code not provided in request")
+		http.Error(w, "code field is empty", http.StatusBadRequest)
+		return
+	}
+
+	// --- 2) Create a temporary directory ---
+	tempDir, err := ioutil.TempDir("", "flutter_project")
+	if err != nil {
+		logger.Error("Failed to create temp dir", zap.Error(err))
+		http.Error(w, "failed to create temp dir", http.StatusInternalServerError)
+		return
+	}
+	defer func(path string) {
+		if rmErr := os.RemoveAll(path); rmErr != nil {
+			logger.Error("Failed to remove temp dir", zap.Error(rmErr))
+		}
+	}(tempDir)
+
+	// --- 3) Copy the Flutter project template ---
+	if err := copyDir("./flutter", tempDir); err != nil {
+		logger.Error("Failed to copy project template", zap.Error(err))
+		http.Error(w, "failed to copy project template", http.StatusInternalServerError)
+		return
+	}
+	logger.Info("Copied Flutter template", zap.String("tempDir", tempDir))
+
+	// --- 4) Write the code to lib/main.dart ---
+	mainDartPath := filepath.Join(tempDir, "lib", "main.dart")
+	if err := os.WriteFile(mainDartPath, []byte(code), 0644); err != nil {
+		logger.Error("Failed to write main.dart", zap.Error(err))
+		http.Error(w, "failed to write main.dart", http.StatusInternalServerError)
+		return
+	}
+	logger.Info("Wrote code to main.dart")
+
+	// --- 5) Zip the project directory ---
+	zipFilePath := tempDir + ".zip"
+	if err := zipDir(tempDir, zipFilePath); err != nil {
+		logger.Error("Failed to create zip file", zap.Error(err))
+		http.Error(w, "failed to create zip file", http.StatusInternalServerError)
+		return
+	}
+	logger.Info("Zipped directory", zap.String("zipPath", zipFilePath))
+
+	// --- 6) Upload the ZIP to Firebase Storage ---
+	firebaseURL, err := uploadToFirebase(zipFilePath)
+	if err != nil {
+		logger.Error("Failed to upload to Firebase", zap.Error(err))
+		http.Error(w, "failed to upload to Firebase: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	logger.Info("Uploaded ZIP to Firebase", zap.String("firebaseURL", firebaseURL))
+
+	// --- 7) Trigger GitHub workflow for web build ---
+	runID, err := triggerWebBuildWorkflow(firebaseURL)
+	if err != nil {
+		logger.Error("Failed to trigger GitHub workflow", zap.Error(err))
+		http.Error(w, "failed to trigger GitHub workflow: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	logger.Info("Triggered web build workflow", zap.Int64("runID", runID))
+
+	// --- 8) Poll for build completion and get artifact URL ---
+	artifactURL, err := waitForBuildAndGetArtifact(runID)
+	if err != nil {
+		logger.Error("Failed to get build artifact", zap.Error(err))
+		http.Error(w, "failed to get build artifact: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// --- 9) Download and send the build files ---
+	resp, err := http.Get(artifactURL)
+	if err != nil {
+		logger.Error("Failed to download artifact", zap.Error(err))
+		http.Error(w, "failed to download artifact", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=web_build.zip")
+
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		logger.Error("Failed to send build files", zap.Error(err))
+		http.Error(w, "failed to send build files", http.StatusInternalServerError)
+		return
+	}
+	logger.Info("Successfully sent build files")
 }
 
 // copyDir copies a directory recursively.
@@ -408,4 +515,157 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// Otherwise, call the next handler
 		next.ServeHTTP(w, r)
 	}
+}
+
+// triggerWebBuildWorkflow triggers a GitHub Actions workflow for web build
+func triggerWebBuildWorkflow(zipURL string) (int64, error) {
+	payload := map[string]interface{}{
+		"ref": "main",
+		"inputs": map[string]string{
+			"code_zip_url": zipURL,
+			"build_type":   "web",
+		},
+	}
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	url := "https://api.github.com/repos/miniblocks-app/compiler/actions/workflows/web-build.yml/dispatches"
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	if githubToken == "" {
+		return 0, fmt.Errorf("GITHUB_TOKEN environment variable not set")
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return 0, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+githubToken)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return 0, fmt.Errorf("GitHub API returned status: %s", resp.Status)
+	}
+
+	// Get the latest workflow run
+	runsURL := "https://api.github.com/repos/miniblocks-app/compiler/actions/runs"
+	req, err = http.NewRequest("GET", runsURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create request for runs: %w", err)
+	}
+
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+githubToken)
+
+	resp, err = client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get runs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var runsResponse struct {
+		WorkflowRuns []struct {
+			ID int64 `json:"id"`
+		} `json:"workflow_runs"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&runsResponse); err != nil {
+		return 0, fmt.Errorf("failed to decode runs response: %w", err)
+	}
+
+	if len(runsResponse.WorkflowRuns) == 0 {
+		return 0, fmt.Errorf("no workflow runs found")
+	}
+
+	return runsResponse.WorkflowRuns[0].ID, nil
+}
+
+// waitForBuildAndGetArtifact polls the GitHub API until the build is complete and returns the artifact URL
+func waitForBuildAndGetArtifact(runID int64) (string, error) {
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	if githubToken == "" {
+		return "", fmt.Errorf("GITHUB_TOKEN environment variable not set")
+	}
+
+	client := &http.Client{}
+	maxAttempts := 30 // 5 minutes with 10-second intervals
+	for i := 0; i < maxAttempts; i++ {
+		// Check run status
+		statusURL := fmt.Sprintf("https://api.github.com/repos/miniblocks-app/compiler/actions/runs/%d", runID)
+		req, err := http.NewRequest("GET", statusURL, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed to create status request: %w", err)
+		}
+
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "Bearer "+githubToken)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("failed to get run status: %w", err)
+		}
+
+		var runStatus struct {
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&runStatus); err != nil {
+			resp.Body.Close()
+			return "", fmt.Errorf("failed to decode run status: %w", err)
+		}
+		resp.Body.Close()
+
+		if runStatus.Status == "completed" {
+			if runStatus.Conclusion != "success" {
+				return "", fmt.Errorf("workflow run failed with conclusion: %s", runStatus.Conclusion)
+			}
+			break
+		}
+
+		time.Sleep(10 * time.Second)
+	}
+
+	// Get artifact URL
+	artifactsURL := fmt.Sprintf("https://api.github.com/repos/miniblocks-app/compiler/actions/runs/%d/artifacts", runID)
+	req, err := http.NewRequest("GET", artifactsURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create artifacts request: %w", err)
+	}
+
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+githubToken)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to get artifacts: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var artifactsResponse struct {
+		Artifacts []struct {
+			Name               string `json:"name"`
+			ArchiveDownloadURL string `json:"archive_download_url"`
+		} `json:"artifacts"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&artifactsResponse); err != nil {
+		return "", fmt.Errorf("failed to decode artifacts response: %w", err)
+	}
+
+	if len(artifactsResponse.Artifacts) == 0 {
+		return "", fmt.Errorf("no artifacts found")
+	}
+
+	return artifactsResponse.Artifacts[0].ArchiveDownloadURL, nil
 }
