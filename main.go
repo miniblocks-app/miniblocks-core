@@ -48,8 +48,8 @@ func main() {
 	// Public routes
 	mux.HandleFunc("/api/register", middleware.CorsMiddleware(userHandler.Register))
 	mux.HandleFunc("/api/login", middleware.CorsMiddleware(userHandler.Login))
-	mux.HandleFunc("/upload", middleware.CorsMiddleware(utils.HandleUpload))
-	mux.HandleFunc("/compile", middleware.CorsMiddleware(utils.HandleCompile))
+	mux.HandleFunc("/api/upload", middleware.CorsMiddleware(utils.HandleUpload))
+	mux.HandleFunc("/api/compile", middleware.CorsMiddleware(utils.HandleCompile))
 
 	// Event routes
 	mux.HandleFunc("/api/events", middleware.CorsMiddleware(eventManager.HandleSSE))
