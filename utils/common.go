@@ -454,7 +454,6 @@ func triggerWebBuildWorkflow(zipURL string) (int64, error) {
 		"ref": "main",
 		"inputs": map[string]string{
 			"code_zip_url": zipURL,
-			"build_type":   "web",
 		},
 	}
 	jsonPayload, err := json.Marshal(payload)
@@ -462,13 +461,13 @@ func triggerWebBuildWorkflow(zipURL string) (int64, error) {
 		return 0, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	url := "https://api.github.com/repos/miniblocks-app/compiler/actions/workflows/web-build.yml/dispatches"
+	webUrl := "https://api.github.com/repos/miniblocks-app/compiler/actions/workflows/164241293/dispatches"
 	githubToken := os.Getenv("GITHUB_TOKEN")
 	if githubToken == "" {
 		return 0, fmt.Errorf("GITHUB_TOKEN environment variable not set")
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+	req, err := http.NewRequest("POST", webUrl, bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return 0, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -476,6 +475,10 @@ func triggerWebBuildWorkflow(zipURL string) (int64, error) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+githubToken)
+
+	// Optional: debug logging of request
+	dump, _ := httputil.DumpRequest(req, true)
+	logger.Info("Workflow Dispatch Request", zap.String("dump", string(dump)))
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
