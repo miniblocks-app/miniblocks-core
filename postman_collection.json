@@ -1,0 +1,163 @@
+{
+	"info": {
+		"name": "Miniblocks Core API",
+		"description": "API collection for Miniblocks Core services",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "baseURL",
+			"value": "http://localhost:8080",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Register",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"your_password\"\n}"
+						},
+						"url": {
+							"raw": "{{baseURL}}/api/register",
+							"host": ["{{baseURL}}"],
+							"path": ["api", "register"]
+						},
+						"description": "Register a new user"
+					}
+				},
+				{
+					"name": "Login",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"your_password\"\n}"
+						},
+						"url": {
+							"raw": "{{baseURL}}/api/login",
+							"host": ["{{baseURL}}"],
+							"path": ["api", "login"]
+						},
+						"description": "Login with user credentials"
+					}
+				}
+			]
+		},
+		{
+			"name": "Profile",
+			"item": [
+				{
+					"name": "Get Profile",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer your_jwt_token"
+							}
+						],
+						"url": {
+							"raw": "{{baseURL}}/api/profile",
+							"host": ["{{baseURL}}"],
+							"path": ["api", "profile"]
+						},
+						"description": "Get user profile information"
+					}
+				},
+				{
+					"name": "Update Profile",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer your_jwt_token"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"name\": \"Updated Name\",\n    \"email\": \"updated@example.com\"\n}"
+						},
+						"url": {
+							"raw": "{{baseURL}}/api/profile/update",
+							"host": ["{{baseURL}}"],
+							"path": ["api", "profile", "update"]
+						},
+						"description": "Update user profile information"
+					}
+				}
+			]
+		},
+		{
+			"name": "Flutter",
+			"item": [
+				{
+					"name": "Upload Code",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"code\": \"import 'package:flutter/material.dart';\n\nvoid main() {\n  runApp(const MyApp());\n}\n\nclass MyApp extends StatelessWidget {\n  const MyApp({super.key});\n\n  @override\n  Widget build(BuildContext context) {\n    return MaterialApp(\n      home: Scaffold(\n        appBar: AppBar(\n          title: const Text('My Flutter App'),\n        ),\n        body: const Center(\n          child: Text('Hello, World!'),\n        ),\n      ),\n    );\n  }\n}\"}"
+						},
+						"url": {
+							"raw": "{{baseURL}}/upload",
+							"host": ["{{baseURL}}"],
+							"path": ["upload"]
+						},
+						"description": "Upload Flutter code for processing"
+					}
+				},
+				{
+					"name": "Compile Code",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"code\": \"import 'package:flutter/material.dart';\n\nvoid main() {\n  runApp(const MyApp());\n}\n\nclass MyApp extends StatelessWidget {\n  const MyApp({super.key});\n\n  @override\n  Widget build(BuildContext context) {\n    return MaterialApp(\n      home: Scaffold(\n        appBar: AppBar(\n          title: const Text('My Flutter App'),\n        ),\n        body: const Center(\n          child: Text('Hello, World!'),\n        ),\n      ),\n    );\n  }\n}\"}"
+						},
+						"url": {
+							"raw": "{{baseURL}}/compile",
+							"host": ["{{baseURL}}"],
+							"path": ["compile"]
+						},
+						"description": "Compile Flutter code and get web build files"
+					}
+				}
+			]
+		}
+	]
+} 
